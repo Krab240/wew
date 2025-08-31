@@ -1,38 +1,69 @@
-name: FreeRDP
+name: RDP Package
 
-on: workflow_dispatch
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
+
   build:
 
-    runs-on: windows-latest
-    timeout-minutes: 9999
+    strategy:
+      matrix:
+        configuration: [Release]
+
+    runs-on: windows-latest  # For a list of available runner types, refer to
+                             # https://help.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idruns-on
+
+    env:
+      Solution_Name: RoyalApps.Community.Rdp.slnx                 # Replace with your solution name, i.e. MyWpfApp.sln.
+      # Test_Project_Path: your-test-project-path                 # Replace with the path to your test project, i.e. MyWpfApp.Tests\MyWpfApp.Tests.csproj.
+      # Wap_Project_Directory: your-wap-project-directory-name    # Replace with the Wap project directory relative to the solution, i.e. MyWpfApp.Package.
+      # Wap_Project_Path: your-wap-project-path                   # Replace with the path to your Wap project, i.e. MyWpf.App.Package\MyWpfApp.Package.wapproj.
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      DOTNET_NOLOGO: true
 
     steps:
-    - name: Downloading Ngrok.
-      run: |
-        Invoke-WebRequest https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-        Invoke-WebRequest https://raw.githubusercontent.com/30dayscoding/rdp/main/start.bat -OutFile start.bat
-        Invoke-WebRequest https://raw.githubusercontent.com/30dayscoding/rdp/main/wallpaper.jpg -OutFile wallpaper.jpg
-        Invoke-WebRequest https://raw.githubusercontent.com/30dayscoding/rdp/main/wallpaper.bat -OutFile wallpaper.bat
-    - name: Extracting Ngrok Files.
-      run: Expand-Archive ngrok.zip
-    - name: Connecting to your Ngrok account.
-      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    # Install the .NET Core workload
+    - name: Install .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    # Add  MSBuild to the PATH: https://github.com/microsoft/setup-msbuild
+    - name: Setup MSBuild.exe
+      uses: microsoft/setup-msbuild@v1.3.1
+
+    # Build
+    - name: build project
+      run: dotnet build -c Release src/RoyalApps.Community.Rdp.WinForms/RoyalApps.Community.Rdp.WinForms.csproj
       env:
-        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-    - name: Activating RDP access.
-      run: | 
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
-        copy wallpaper.jpg D:\a\wallpaper.jpg
-        copy wallpaper.bat D:\a\wallpaper.bat
-    - name: Creating Tunnel.
-      run: Start-Process Powershell -ArgumentList '-Noexit -Command ".\ngrok\ngrok.exe tcp 3389"'
-    - name: Connecting to your RDP.
-      run: cmd /c start.bat
-    - name: RDP is ready!
-      run: | 
-        Invoke-WebRequest https://github.com/30dayscoding/rdp/raw/main/loop.ps1 -OutFile loop.ps1
-        ./loop.ps1
+        Configuration: ${{ matrix.configuration }}
+
+    # Pack nuget package
+    - name: dotnet pack
+      run: dotnet pack --no-build -c Release src/RoyalApps.Community.Rdp.WinForms/RoyalApps.Community.Rdp.WinForms.csproj -o .
+      env:
+        Configuration: ${{ matrix.configuration }}
+
+    # Upload packages
+    - name: Upload managed components
+      uses: actions/upload-artifact@v4
+      with:
+        name: Rdp-nupkg
+        path: ./*.nupkg
+
+    # Push nuget package to nuget.org
+    - name: nuget push
+      if: github.ref == 'refs/heads/main'
+      run: dotnet nuget push *.nupkg -s https://api.nuget.org/v3/index.json -k ${{ secrets.NUGET_API_KEY }} --skip-duplicate
+      env:
+        Configuration: ${{ matrix.configuration }}
